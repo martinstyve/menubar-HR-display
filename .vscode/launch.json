@@ -1,0 +1,24 @@
+{
+  "configurations": [
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:menubar-HR-display}",
+      "name": "Debug HR",
+      "target": "HR",
+      "configuration": "debug",
+      "preLaunchTask": "swift: Build Debug HR"
+    },
+    {
+      "type": "swift",
+      "request": "launch",
+      "args": [],
+      "cwd": "${workspaceFolder:menubar-HR-display}",
+      "name": "Release HR",
+      "target": "HR",
+      "configuration": "release",
+      "preLaunchTask": "swift: Build Release HR"
+    }
+  ]
+}

@@ -1,23 +1,25 @@
-# HR
+# Menubar HR Display
 
-Simple macOS menubar-only heart rate monitor
+Simple macOS menubar-only heart rate monitor that reads Bluetooth heart-rate broadcasts.
 
-https://github.com/user-attachments/assets/7f214d4d-e6e8-4876-8a66-fee8abcee16d
+![photo menu bar widget](assets/hr-display-example.png)
 
 ## Installation
 
-- [Click this to download the latest release](https://github.com/arrowpc/HR/releases/download/v1.0.0/HR-1.0.0.zip)
-- Unzip and move the app to your `/Applications` folder
+- clone repo at your `/Applications` folder
 
 ## Build from source
 
-1. Clone the repository:
-   ```sh
-   git clone https://github.com/arrowpc/HR.git
-   cd HR
-   ```
-2. Build and run:
    ```sh
    swift build -c release
+
    ./.build/release/HR
    ```
+
+## Usage
+
+1. Put your heart rate monitor or smart watch into heart-rate broadcast mode.
+2. Launch the app and allow Bluetooth access when macOS asks.
+3. The menubar item will update with the live heart rate once the device is discovered.
+
+The app listens for the standard Bluetooth Heart Rate Service, so any compatible HR broadcaster should work.

@@ -1,203 +1,118 @@
 import Cocoa
+import CoreBluetooth
 
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
+    private let heartRateServiceUUID = CBUUID(string: "180D")
+    private let heartRateMeasurementUUID = CBUUID(string: "2A37")
+
     private var statusItem: NSStatusItem!
     private var statusMenu: NSMenu!
-    private var taps: [Date] = []
-    private var idleTimer: Timer?
-    // (60/30) = 2; if your heart rate goes lower than 30, go to a doctor
-    private let idleThreshold: TimeInterval = 2.0
-    private var avgBPM: Int?
-
-    private let ageKey = "UserAge"
-    private let defaultAge = 30
-
-    private var userAge: Int {
-        let saved = UserDefaults.standard.integer(forKey: ageKey)
-        return saved > 0 ? saved : defaultAge
-    }
-
-    private var maxHeartRate: Int {
-        return 220 - userAge
-    }
+    private var centralManager: CBCentralManager?
+    private var heartRatePeripheral: CBPeripheral?
+    private var heartRateCharacteristic: CBCharacteristic?
+    private var lastHeartRate: Int?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        statusItem = NSStatusBar.system.statusItem(
-            withLength: NSStatusItem.variableLength
-        )
-
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         setupMenu()
+        setStatusText("HR", color: nil)
 
-        if let btn = statusItem.button {
-            btn.title = "HR"
-            btn.target = self
-            btn.action = #selector(handleClick(_:))
-            btn.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        if let button = statusItem.button {
+            button.title = "HR"
+            button.target = self
+            button.action = #selector(showMenu(_:))
         }
+
+        centralManager = CBCentralManager(
+            delegate: self,
+            queue: .main,
+            options: [CBCentralManagerOptionShowPowerAlertKey: true]
+        )
     }
 
     private func setupMenu() {
         let menu = NSMenu()
 
-        // Age menu
-        let ageMenu = NSMenuItem(
-            title: "Age: \(userAge)",
-            action: nil,
-            keyEquivalent: ""
-        )
-        let ageSubmenu = NSMenu()
+        let statusItem = NSMenuItem(title: menuStatusText, action: nil, keyEquivalent: "")
+        statusItem.isEnabled = false
+        menu.addItem(statusItem)
 
-        // Add common ages
-        for age in stride(from: 20, through: 70, by: 5) {
-            let ageItem = NSMenuItem(
-                title: "\(age)",
-                action: #selector(setAge(_:)),
-                keyEquivalent: ""
-            )
-            ageItem.target = self
-            ageItem.tag = age
-            if age == userAge {
-                ageItem.state = .on
-            }
-            ageSubmenu.addItem(ageItem)
+        if let peripheral = heartRatePeripheral {
+            let deviceName = peripheral.name ?? peripheral.identifier.uuidString
+            let deviceItem = NSMenuItem(title: "Device: \(deviceName)", action: nil, keyEquivalent: "")
+            deviceItem.isEnabled = false
+            menu.addItem(deviceItem)
         }
 
-        // Add separator and custom age input option
-        ageSubmenu.addItem(NSMenuItem.separator())
-        let customAgeItem = NSMenuItem(
-            title: "Enter Custom Age...",
-            action: #selector(promptForCustomAge(_:)),
-            keyEquivalent: ""
-        )
-        customAgeItem.target = self
-        ageSubmenu.addItem(customAgeItem)
-
-        ageMenu.submenu = ageSubmenu
-        menu.addItem(ageMenu)
-
-        // Add separator and quit
         menu.addItem(NSMenuItem.separator())
-        let quitMenuItem = NSMenuItem(
-            title: "Quit",
-            action: #selector(quit),
-            keyEquivalent: "q"
-        )
+
+        let rescanItem = NSMenuItem(title: "Rescan", action: #selector(rescan), keyEquivalent: "r")
+        rescanItem.target = self
+        menu.addItem(rescanItem)
+
+        let quitMenuItem = NSMenuItem(title: "Quit", action: #selector(quit), keyEquivalent: "q")
         quitMenuItem.target = self
         menu.addItem(quitMenuItem)
 
         statusMenu = menu
     }
 
-    @objc func setAge(_ sender: NSMenuItem) {
-        let age = sender.tag
-        UserDefaults.standard.set(age, forKey: ageKey)
-        // Update the menu to reflect the new age and checkmarks
+    @objc func showMenu(_ sender: Any?) {
+        statusItem.menu = statusMenu
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    @objc func rescan() {
+        disconnectCurrentPeripheral()
+        startScanningForHeartRateSensors()
         setupMenu()
-    }
-
-    @objc func promptForCustomAge(_ sender: NSMenuItem) {
-        let alert = NSAlert()
-        alert.messageText = "Enter Your Age"
-        alert.informativeText =
-            "Please enter your current age (1-129) to calculate max heart rate accurately."
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-
-        let inputTextField = NSTextField(
-            frame: NSRect(x: 0, y: 0, width: 200, height: 24)
-        )
-        inputTextField.placeholderString = "e.g., 35"
-        inputTextField.integerValue = userAge  // Pre-fill with current age
-        // For more robust input, you could assign a NumberFormatter
-        // inputTextField.formatter = NumberFormatter()...
-
-        alert.accessoryView = inputTextField
-        // Ensure the text field is focused when the alert appears
-        // This needs to be done after the accessory view is set and the window is available.
-        // A common way is to set it on the window before running the modal.
-        // NSAlert creates its window lazily. We can try to set it here.
-        // If it doesn't work reliably, it might need to be set after alert.layout()
-        // or by observing window creation. For most cases, this works:
-        alert.window.initialFirstResponder = inputTextField
-
-        let response = alert.runModal()
-
-        if response == .alertFirstButtonReturn {  // OK button
-            let ageString = inputTextField.stringValue
-            if let newAge = Int(ageString), newAge > 0 && newAge < 130 {  // Basic validation
-                UserDefaults.standard.set(newAge, forKey: ageKey)
-                setupMenu()  // Rebuild menu to reflect new age and checkmarks
-            } else {
-                // Optional: Show an error for invalid input
-                let errorAlert = NSAlert()
-                errorAlert.messageText = "Invalid Age"
-                errorAlert.informativeText =
-                    "Please enter a valid number for age (e.g., 1-129)."
-                errorAlert.addButton(withTitle: "OK")
-                errorAlert.runModal()
-            }
-        }
-    }
-
-    @objc func handleClick(_ sender: Any?) {
-        if let event = NSApp.currentEvent {
-            if event.type == .rightMouseUp {
-                // Show menu on right click
-                statusItem.menu = statusMenu
-                statusItem.button?.performClick(nil)
-                statusItem.menu = nil
-            } else {
-                // Handle left click with the original tap behavior
-                didTap()
-            }
-        }
+        setStatusText("...", color: nil)
     }
 
     @objc func quit() {
         NSApplication.shared.terminate(nil)
     }
 
-    func didTap() {
-        let now = Date()
-        taps.append(now)
-
-        idleTimer?.invalidate()
-        idleTimer = Timer.scheduledTimer(
-            timeInterval: idleThreshold,
-            target: self,
-            selector: #selector(endMeasurement),
-            userInfo: nil,
-            repeats: false
-        )
-
-        guard taps.count >= 2 else {
-            // I believe there should be some sort of indication that the user has pressed once,
-            // not sure what that should be
-            setStatusText("HR", color: nil)
-            return
+    private var menuStatusText: String {
+        if let bpm = lastHeartRate {
+            return "Heart Rate: \(bpm) bpm"
         }
 
-        let intervals = zip(taps.dropFirst(), taps)
-            .map { $0.timeIntervalSince($1) }
-        let avg = intervals.reduce(0, +) / Double(intervals.count)
-        avgBPM = Int(round(60.0 / avg))
+        guard let centralManager else {
+            return "Starting Bluetooth..."
+        }
 
-        if let bpm = avgBPM {
-            setStatusText("\(bpm)", color: colorForHeartRate(bpm))
-        } else {
-            setStatusText("HR", color: nil)
+        switch centralManager.state {
+        case .poweredOn:
+            if heartRatePeripheral != nil {
+                return "Connecting to heart rate sensor..."
+            }
+            return "Scanning for Garmin heart rate..."
+        case .poweredOff:
+            return "Bluetooth is off"
+        case .unauthorized:
+            return "Bluetooth access not allowed"
+        case .unsupported:
+            return "Bluetooth not supported"
+        case .resetting:
+            return "Bluetooth resetting..."
+        case .unknown:
+            fallthrough
+        @unknown default:
+            return "Waiting for Bluetooth..."
         }
     }
 
     private func colorForHeartRate(_ bpm: Int) -> NSColor {
-        let percentage = Double(bpm) / Double(maxHeartRate)
-
-        switch percentage {
-        case 0..<0.65: return NSColor.systemGreen
-        case 0.65..<0.85: return NSColor.systemYellow
-        case 0.85...: return NSColor.systemRed
-        default: return NSColor.labelColor
+        switch bpm {
+        case ..<80:
+            return .systemGreen
+        case 100..<100:
+            return .systemYellow
+        default:
+            return .systemRed
         }
     }
 
@@ -209,45 +124,143 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .font: NSFont.menuBarFont(ofSize: 0),
         ]
 
-        let attributedTitle = NSAttributedString(
-            string: text,
-            attributes: attributes
-        )
-        button.attributedTitle = attributedTitle
+        button.attributedTitle = NSAttributedString(string: text, attributes: attributes)
     }
 
-    // TODO: Save that average somewhere?
-    @objc func endMeasurement() {
-        idleTimer?.invalidate()
-        taps.removeAll()
+    private func updateDisplay(with heartRate: Int) {
+        lastHeartRate = heartRate
+        setStatusText("\(heartRate)", color: colorForHeartRate(heartRate))
+        setupMenu()
+    }
 
-        guard let bpm = avgBPM else {
+    private func disconnectCurrentPeripheral() {
+        if let peripheral = heartRatePeripheral {
+            centralManager?.cancelPeripheralConnection(peripheral)
+        }
+
+        heartRatePeripheral = nil
+        heartRateCharacteristic = nil
+    }
+
+    private func startScanningForHeartRateSensors() {
+        guard let centralManager, centralManager.state == .poweredOn else { return }
+
+        centralManager.scanForPeripherals(
+            withServices: [heartRateServiceUUID],
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
+        )
+    }
+
+    private func parseHeartRate(from data: Data) -> Int? {
+        guard !data.isEmpty else { return nil }
+
+        let flags = data[data.startIndex]
+        let useUInt16 = flags & 0x01 != 0
+
+        if useUInt16 {
+            guard data.count >= 3 else { return nil }
+            return Int(UInt16(data[1]) | (UInt16(data[2]) << 8))
+        }
+
+        guard data.count >= 2 else { return nil }
+        return Int(data[1])
+    }
+}
+
+extension AppDelegate: @preconcurrency CBCentralManagerDelegate {
+    func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        setupMenu()
+
+        guard central.state == .poweredOn else {
             setStatusText("HR", color: nil)
             return
         }
 
-        let flashes = 4
-        let flashInterval = 0.25
-        let hrColor = colorForHeartRate(bpm)
+        startScanningForHeartRateSensors()
+        setStatusText("...", color: nil)
+    }
 
-        func flash(_ count: Int) {
-            if count >= flashes {
-                setStatusText("HR", color: nil)
-                avgBPM = nil
-                return
-            }
+    func centralManager(
+        _ central: CBCentralManager,
+        didDiscover peripheral: CBPeripheral,
+        advertisementData: [String: Any],
+        rssi _: NSNumber
+    ) {
+        guard heartRatePeripheral == nil else { return }
 
-            if count % 2 == 0 {
-                setStatusText("\(bpm)", color: hrColor)
-            } else {
-                setStatusText(" ", color: nil)
-            }
+        heartRatePeripheral = peripheral
+        peripheral.delegate = self
+        central.stopScan()
+        central.connect(peripheral, options: nil)
+        setupMenu()
+        setStatusText("...", color: nil)
+    }
 
-            DispatchQueue.main.asyncAfter(deadline: .now() + flashInterval) {
-                flash(count + 1)
-            }
+    func centralManager(
+        _ central: CBCentralManager,
+        didConnect peripheral: CBPeripheral
+    ) {
+        peripheral.discoverServices([heartRateServiceUUID])
+        setupMenu()
+    }
+
+    func centralManager(
+        _ central: CBCentralManager,
+        didFailToConnect peripheral: CBPeripheral,
+        error: (any Error)?
+    ) {
+        disconnectCurrentPeripheral()
+        setupMenu()
+        setStatusText("HR", color: nil)
+        startScanningForHeartRateSensors()
+    }
+
+    func centralManager(
+        _ central: CBCentralManager,
+        didDisconnectPeripheral peripheral: CBPeripheral,
+        error: (any Error)?
+    ) {
+        disconnectCurrentPeripheral()
+        setupMenu()
+        setStatusText("HR", color: nil)
+        startScanningForHeartRateSensors()
+    }
+}
+
+extension AppDelegate: @preconcurrency CBPeripheralDelegate {
+    func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: (any Error)?) {
+        guard error == nil, let services = peripheral.services else { return }
+
+        for service in services where service.uuid == heartRateServiceUUID {
+            peripheral.discoverCharacteristics([heartRateMeasurementUUID], for: service)
+        }
+    }
+
+    func peripheral(
+        _ peripheral: CBPeripheral,
+        didDiscoverCharacteristicsFor service: CBService,
+        error: (any Error)?
+    ) {
+        guard error == nil, let characteristics = service.characteristics else { return }
+
+        for characteristic in characteristics where characteristic.uuid == heartRateMeasurementUUID {
+            heartRateCharacteristic = characteristic
+            peripheral.setNotifyValue(true, for: characteristic)
+        }
+    }
+
+    func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateValueFor characteristic: CBCharacteristic,
+        error: (any Error)?
+    ) {
+        guard error == nil,
+              characteristic.uuid == heartRateMeasurementUUID,
+              let data = characteristic.value,
+              let heartRate = parseHeartRate(from: data) else {
+            return
         }
 
-        flash(0)
+        updateDisplay(with: heartRate)
     }
 }
