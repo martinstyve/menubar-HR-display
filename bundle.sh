@@ -4,7 +4,7 @@ set -e
 APP_NAME="HR"
 BUILD_PATH=".build/release/$APP_NAME"
 ASSETS_PATH="assets"
-APP_BUNDLE="$APP_NAME.app"
+APP_BUNDLE="HR-display.app"
 
 swift build -c release
 

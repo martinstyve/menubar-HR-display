@@ -4,17 +4,17 @@
 <plist version="1.0">
 <dict>
   <key>CFBundleName</key>
-  <string>Menubar-HR-Display</string>
+  <string>HR-display</string>
   <key>CFBundleExecutable</key>
-  <string>Menubar-HR-Display</string>
+  <string>HR</string>
   <key>CFBundleIdentifier</key>
-  <string>com.example.Menubar-HR-Display</string>
+  <string>com.example.HR-display</string>
   <key>CFBundleVersion</key>
   <string>1.0</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleIconFile</key>
-  <string>Menubar-HR-Display</string>
+  <string>HR</string>
   <key>NSBluetoothAlwaysUsageDescription</key>
   <string>Menubar-HR-Display uses Bluetooth to read your heart rate broadcast.</string>
   <key>LSUIElement</key>
